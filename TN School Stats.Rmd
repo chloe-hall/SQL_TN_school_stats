@@ -1,0 +1,200 @@
+---
+title: "TN School Stats"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+Inputting school data from Tennessee State Performance Tests to see how does discipline and chronic absenteeism affect performance?
+```{r setup}
+#install.packages("DBI")
+library(tidyverse)
+library(DBI)
+library(readr)
+db <- dbConnect(RSQLite::SQLite(), dbname = "sql.sqlite")
+
+setwd("~/Downloads/School/SQL")
+
+#Inputting the tables of only school values and making a merge key for joining later 
+tenn_18 <- read_csv("tenn_2018_achieve_copy.csv")  %>% 
+  filter(!is.na(school_name)) %>% 
+  unite(dis_school, district_number, school_name, sep = "_") 
+dis <-read_csv("discipline_tn_copy.csv") %>% 
+   filter(!is.na(school_name)) %>% 
+    unite(dis_school, district_number, school_name, sep = "_") 
+ca <-read_csv("chronic_absent_copy.csv") %>% 
+   filter(!is.na(school_name)) %>% 
+    unite(dis_school, district_number, school_name, sep = "_") 
+```
+
+
+#Writing the Tables to SQL database
+```{r write data}
+dbWriteTable(db,
+    "tenn_18",
+    tenn_18, # df being written
+    overwrite = TRUE)
+dbWriteTable(db, 
+    "dis",
+    dis, # df being written 
+    overwrite = TRUE)
+dbWriteTable(db, 
+    "ca",
+    ca, # df being written 
+    overwrite = TRUE)
+```
+
+#Ensursing our tables were created in SQL
+```{sql, connection=db}
+SELECT * FROM sqlite_master;
+```
+
+#Previewing the tenn_18 table
+```{sql, connection=db}
+SELECT *
+FROM "tenn_18"
+LIMIT 10
+```
+
+#What is the count of distinct schools in the dataset?
+```{sql, connection=db}
+SELECT COUNT(DISTINCT dis_school) FROM "tenn_18";
+```
+
+#Joining the tables to measure discipline or chronic absenteeism 
+```{sql, connection=db}
+CREATE TABLE tenn_18_dis AS
+SELECT * 
+FROM tenn_18 
+LEFT JOIN dis 
+ON(tenn_18.dis_school = dis.dis_school);
+```
+
+#Previewing the tenn_18_dis table
+```{sql, connection=db}
+SELECT *
+FROM "tenn_18_dis"
+LIMIT 10
+```
+
+#Joining the tables to measure discipline or chronic absenteeism 
+```{sql, connection=db}
+CREATE TABLE tenn_18_ca AS
+SELECT * 
+FROM tenn_18 
+LEFT JOIN ca
+ON(tenn_18.dis_school = ca.dis_school);
+```
+
+#Previewing the tenn_18_ca table
+```{sql, connection=db}
+SELECT *
+FROM "tenn_18_ca"
+LIMIT 10
+```
+
+#What are the schools with the highest percent on mastered test scores?
+```{sql, connection=db}
+SELECT percent_on_mastered, school_name
+FROM "tenn_18"
+WHERE subgroup = "All Students"
+AND school_name IS NOT NULL
+GROUP BY school_name
+ORDER BY percent_on_mastered DESC
+```
+#What are the schools with the lowest percent on mastered  test scores?
+```{sql, connection=db}
+SELECT percent_on_mastered, dis_school
+FROM "tenn_18"
+WHERE subgroup = "All Students"
+AND percent_on_mastered IS NOT NULL
+GROUP BY dis_school
+ORDER BY percent_on_mastered ASC
+```
+
+#What the schools with the highest chronic absenteeism?
+```{sql, connection=db}
+SELECT percent_ca, dis_school
+FROM "ca"
+WHERE subgroup = "All Students"
+AND percent_ca != '*'
+GROUP BY dis_school
+ORDER BY percent_ca DESC
+```
+
+#What the schools with the highest discipline percentage?
+```{sql, connection=db}
+SELECT percent, dis_school
+FROM "dis"
+WHERE subgroup = "All Students"
+AND percent IS NOT NULL
+GROUP BY dis_school
+ORDER BY percent DESC
+```
+
+#Selecting the lowest performing school and subject
+```{sql, connection=db}
+SELECT MIN(percent_on_mastered), dis_school, overall_subject
+FROM "tenn_18"
+WHERE subgroup = "All Students"
+```
+#Selecting the highest performing school and subject
+```{sql, connection=db}
+SELECT MAX(percent_on_mastered), dis_school, overall_subject
+FROM "tenn_18"
+WHERE subgroup = "All Students"
+```
+#What is the chronic absenteeism at the lowest performing school?
+```{sql, connection=db}
+SELECT MIN(percent_on_mastered), dis_school, percent_ca
+FROM "tenn_18_ca"
+WHERE subgroup = "All Students"
+```
+##What is the discipline rate at the lowest performing school?
+```{sql, connection=db}
+SELECT MIN(percent_on_mastered), dis_school, percent
+FROM "tenn_18_dis"
+WHERE subgroup = "All Students"
+```
+
+#What is the chronic absenteeism at the highest performing school?
+```{sql, connection=db}
+SELECT MAX(percent_on_mastered), dis_school, percent_ca
+FROM "tenn_18_ca"
+WHERE subgroup = "All Students"
+```
+##What is the discipline rate at the highest performing school?
+```{sql, connection=db}
+SELECT MAX(percent_on_mastered), dis_school, percent
+FROM "tenn_18_dis"
+WHERE subgroup = "All Students"
+```
+- The lowest performing school had a high chronic absenteeism of 18.6 percent and .2 percent discipline rate, while the high performing school had a 3.5 percent of chronic absenteeism and a 0 percent rate of discipline.
+
+#What is the average science score across all school?
+```{sql, connection=db}
+SELECT AVG(percent_on_mastered)
+FROM "tenn_18"
+WHERE subgroup = "All Students"
+AND school_name IS NOT NULL
+AND overall_subject = "Science"
+```
+
+#What is the average chronic absenteeism across all school?
+```{sql, connection=db}
+SELECT AVG(percent_ca)
+FROM "ca"
+WHERE subgroup = "All Students"
+```
+
+#Case when to find outliers of disciplinary measures
+```{sql, connection=db}
+SELECT 
+percent_ca, 
+dis_school,
+CASE WHEN percent_ca > 12.23608	 THEN 'above average absenteeism'
+            WHEN percent_ca < 12.23608	  THEN 'below average'
+            WHEN percent_ca = '*' THEN 'na'
+            ELSE "average absenteeism"
+            END AS absenteeism
+FROM ca;
+```
